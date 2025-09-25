@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<wayfire>
+	<plugin name="wf-menu">
+		<_short>Wayfire Menu</_short>
+		<_long>Right click menu plugin for wayfire.</_long>
+		<category>Utility</category>
+	</plugin>
+</wayfire>
