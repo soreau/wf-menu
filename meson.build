@@ -11,13 +11,14 @@ project(
     ],
 )
 
-add_project_arguments(['-DWLR_USE_UNSTABLE'], language: ['cpp', 'c'])
 add_project_arguments(['-DWAYFIRE_PLUGIN'], language: ['cpp', 'c'])
 add_project_link_arguments(['-rdynamic','-fPIC'], language:'cpp')
 
-wayfire = dependency('wayfire', version: '>=0.9.0')
+wayland_client = dependency('wayland-client')
+wayfire = dependency('wayfire', version: '>=0.11.0')
+gtkmm  = dependency('gtkmm-4.0')
 
+subdir('proto')
+subdir('client')
 subdir('plugin')
 subdir('metadata')
-
-install_data('wf-menu.py', install_dir : get_option('bindir'))

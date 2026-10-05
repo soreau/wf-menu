@@ -1,0 +1,26 @@
+<protocol name="wf_menu">
+    <interface name="wf_menu_manager" version="1">
+        <event name="menu_items_start">
+            <arg name="view_id" type="uint"/>
+        </event>
+
+        <event name="menu_item">
+            <arg name="id" type="uint"/>
+            <arg name="item" type="string"/>
+        </event>
+
+        <event name="submenu_item">
+            <arg name="id" type="uint"/>
+            <arg name="item" type="string"/>
+        </event>
+
+        <event name="menu_items_done">
+        </event>
+
+        <request name="action_request">
+            <arg name="view_id" type="uint"/>
+            <arg name="action_id" type="uint"/>
+            <arg name="action" type="string"/>
+        </request>
+    </interface>
+</protocol>
