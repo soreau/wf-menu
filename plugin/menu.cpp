@@ -25,6 +25,7 @@
 #include <wayfire/core.hpp>
 #include <wayfire/seat.hpp>
 #include <wayfire/plugin.hpp>
+#include <wayfire/opengl.hpp>
 #include <wayfire/util/log.hpp>
 #include <wayfire/view-helpers.hpp>
 #include <wayfire/toplevel-view.hpp>
@@ -36,10 +37,23 @@
 #include <wayfire/scene-operations.hpp>
 #include <wayfire/signal-definitions.hpp>
 #include <wayfire/per-output-plugin.hpp>
+#include <wayfire/txn/transaction-manager.hpp>
 #include <wayfire/plugins/common/shared-core-data.hpp>
 
 #include "wf-menu-server-protocol.h"
 
+
+#define BORDER_PADDING 20.0
+
+static wl_resource *menu_resource;
+static wayfire_view menu_view, parent_view;
+std::vector<std::pair<uint32_t, std::string>> menu_items;
+static void bind_menu(wl_client * client, void *data, uint32_t, uint32_t id);
+
+namespace wf
+{
+namespace menu
+{
 static const std::string barrel_roll_transformer_name = "barrel-roll-transformer";
 static const std::string workspace_switch_transformer_name = "workspace-switch-transformer";
 using namespace wf::animation;
@@ -56,11 +70,195 @@ class workspace_switch_animation_t : public duration_t
     using duration_t::duration_t;
 };
 
-std::vector<std::pair<uint32_t, std::string>> menu_items;
 
-static wl_resource *menu_resource;
-static wayfire_view menu_view, parent_view;
-static void bind_menu(wl_client * client, void *data, uint32_t, uint32_t id);
+static const char *shadow_vert_source =
+    R"(
+#version 100
+
+precision highp float;
+
+attribute highp vec2 position;
+
+uniform mat4 matrix;
+
+void main() {
+    gl_Position = matrix * vec4(position, 0.0, 1.0);
+}
+)";
+
+static const char *shadow_frag_source =
+    R"(
+#version 100
+
+precision highp float;
+
+vec4 shadow_color = vec4(0.0, 0.0, 0.0, 0.2);
+uniform float shadow_radius;
+uniform vec2 size;
+
+void main()
+{
+    float d;
+    vec4 c = shadow_color;
+    vec4 m = vec4(0.0);
+    vec4 s;
+    vec2 pos = gl_FragCoord.xy;
+    float diffuse = 1.0 / shadow_radius;
+
+    // left
+    if (pos.x < shadow_radius * 2.0 && pos.y >= shadow_radius * 2.0 && pos.y <= size.y - shadow_radius * 2.0)
+    {
+        d = distance(vec2(float(shadow_radius * 2.0), float(pos.y)), pos);
+        gl_FragColor = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
+        return;
+    } else
+    // top left corner
+    if (pos.x < shadow_radius * 2.0 && pos.y < shadow_radius * 2.0)
+    {
+        d = distance(vec2(float(shadow_radius * 2.0)), pos);
+        s = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
+        c = vec4(0.0);
+        d = distance(vec2(float(shadow_radius * 2.0)), pos);
+        gl_FragColor = mix(c, s, clamp(d, 0.0, 1.0));
+        return;
+    } else
+    // bottom left corner
+    if (pos.x < (shadow_radius * 2.0) && pos.y > size.y - (shadow_radius * 2.0))
+    {
+        d = distance(vec2(float((shadow_radius * 2.0)), float((size.y - 1.0) - (shadow_radius * 2.0))), pos);
+        s = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
+        d = distance(vec2(float((shadow_radius * 2.0)), float((size.y - 1.0) - (shadow_radius * 2.0))), pos);
+        gl_FragColor = mix(c, s, clamp(d, 0.0, 1.0));
+        return;
+    } else
+    // top
+    if (pos.x >= shadow_radius * 2.0 && pos.x <= size.x - shadow_radius * 2.0 && pos.y < shadow_radius * 2.0)
+    {
+        d = distance(vec2(float(pos.x), float(shadow_radius * 2.0)), pos);
+        gl_FragColor = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
+        return;
+    } else
+    // right
+    if (pos.x > (size.x - 1.0) - shadow_radius * 2.0 && pos.y >= shadow_radius * 2.0 && pos.y <= (size.y - 1.0) - shadow_radius * 2.0)
+    {
+        d = distance(vec2(float((size.x - 1.0) - shadow_radius * 2.0), float(pos.y)), pos);
+        gl_FragColor = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
+        return;
+    } else
+    // top right corner
+    if (pos.x > size.x - (shadow_radius * 2.0) && pos.y < (shadow_radius * 2.0))
+    {
+        d = distance(vec2(float((size.x - 1.0) - (shadow_radius * 2.0)), float((shadow_radius * 2.0))), pos);
+        s = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
+        d = distance(vec2(float((size.x - 1.0) - (shadow_radius * 2.0)), float((shadow_radius * 2.0))), pos);
+        gl_FragColor = mix(c, s, clamp(d, 0.0, 1.0));
+        return;
+    } else
+    // bottom right corner
+    if (pos.x > (size.x - 1.0) - (shadow_radius * 2.0) && pos.y > (size.y - 1.0) - (shadow_radius * 2.0))
+    {
+        d = distance(vec2(float((size.x - 1.0) - (shadow_radius * 2.0)), float((size.y - 1.0) - (shadow_radius * 2.0))), pos);
+        s = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
+        d = distance(vec2(float((size.x - 1.0) - (shadow_radius * 2.0)), float((size.y - 1.0) - (shadow_radius * 2.0))), pos);
+        gl_FragColor = mix(c, s, clamp(d, 0.0, 1.0));
+        return;
+    } else
+    // bottom
+    if (pos.x >= (shadow_radius * 2.0) && pos.x <= (size.x - 1.0) - (shadow_radius * 2.0) && pos.y > (size.y - 1.0) - shadow_radius * 2.0)
+    {
+        d = distance(vec2(float(pos.x), float((size.y - 1.0) - shadow_radius * 2.0)), pos);
+        gl_FragColor = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
+        return;
+    }
+
+    discard;
+}
+)";
+
+class simple_shadow_node_t : public wf::scene::node_t
+{
+    wayfire_toplevel_view view;
+    OpenGL::program_t program;
+
+  public:
+
+    simple_shadow_node_t(wayfire_toplevel_view view) : wf::scene::node_t(false)
+    {
+        this->view = view;
+        program.set_simple(OpenGL::compile_program(
+            shadow_vert_source, shadow_frag_source));
+    }
+
+    ~simple_shadow_node_t()
+    {}
+
+    class shadow_render_instance_t : public wf::scene::render_instance_t
+    {
+        simple_shadow_node_t *self;
+        wf::scene::damage_callback push_damage;
+
+        wf::signal::connection_t<wf::scene::node_damage_signal> on_surface_damage =
+            [=] (wf::scene::node_damage_signal *data)
+        {
+            push_damage(data->region);
+        };
+
+      public:
+        shadow_render_instance_t(simple_shadow_node_t *self, wf::scene::damage_callback push_damage)
+        {
+            this->self = self;
+            this->push_damage = push_damage;
+            self->connect(&on_surface_damage);
+        }
+
+        void schedule_instructions(std::vector<wf::scene::render_instruction_t>& instructions,
+            const wf::render_target_t& target, wf::regionf_t& damage) override
+        {
+            instructions.push_back(wf::scene::render_instruction_t{
+                        .instance = this,
+                        .target   = target,
+                        .damage   = damage & self->get_bounding_box(),
+                    });
+        }
+
+        void render(const wf::scene::render_instruction_t& data) override
+        {
+            static const float vertex_data[] = {
+                -1.0f, -1.0f,
+                1.0f, -1.0f,
+                1.0f, 1.0f,
+                -1.0f, 1.0f
+            };
+            auto vg = self->view->get_geometry();
+            data.pass->custom_gles_subpass(data.target, [&]
+            {
+                self->program.use(wf::TEXTURE_TYPE_RGBA);
+                self->program.uniformMatrix4f("matrix", wf::gles::output_transform(data.target));
+                self->program.attrib_pointer("position", 2, 0, vertex_data);
+                self->program.uniform2f("size", vg.width, vg.height);
+                self->program.uniform1f("shadow_radius", BORDER_PADDING / 2.0);
+                gles::for_each_scissor_rect(data.target, data.damage, [&]
+                {
+                    GL_CALL(glDrawArrays(GL_TRIANGLE_FAN, 0, 4));
+                });
+                self->program.deactivate();
+            });
+        }
+    };
+
+    void gen_render_instances(std::vector<wf::scene::render_instance_uptr>& instances,
+        wf::scene::damage_callback push_damage, wf::output_t *output = nullptr) override
+    {
+        instances.push_back(std::make_unique<shadow_render_instance_t>(this, push_damage));
+    }
+
+    wf::geometry_t get_bounding_box() override
+    {
+        auto vg = view->get_geometry();
+        vg.x = vg.y = -BORDER_PADDING;
+        return vg;
+    }
+};
 
 class wf_menu : public wf::per_output_plugin_instance_t
 {
@@ -138,8 +336,14 @@ class wf_menu : public wf::per_output_plugin_instance_t
             menu_view = ev->view;
             menu_view->connect(&on_view_unmapped);
             menu_view->connect(&on_view_activated);
+            auto& pending = toplevel->toplevel()->pending();
+            pending.margins  = {BORDER_PADDING, BORDER_PADDING, BORDER_PADDING, BORDER_PADDING};
+            pending.geometry = wf::expand_geometry_by_margins(pending.geometry, pending.margins);
+            wf::get_core().tx_manager->schedule_object(toplevel->toplevel());
             wf::scene::readd_front(output->node_for_layer(wf::scene::layer::LOCK),
                 menu_view->get_root_node());
+            auto shadow = std::make_shared<simple_shadow_node_t>(toplevel);
+            wf::scene::add_back(menu_view->get_surface_root_node(), shadow);
         }
     };
 
@@ -330,11 +534,13 @@ class wf_menu : public wf::per_output_plugin_instance_t
         wl_global_destroy(menu_global);
     }
 };
+}
+}
 
 void handle_action_request(wl_client*, wl_resource *resource, uint32_t view_id, uint32_t action_id,
     const char *action)
 {
-    wf_menu *menu = (wf_menu*)wl_resource_get_user_data(resource);
+    wf::menu::wf_menu *menu = (wf::menu::wf_menu*)wl_resource_get_user_data(resource);
     menu->do_action(view_id, action_id, action);
 }
 
@@ -399,4 +605,4 @@ static void bind_menu(wl_client *client, void *data, uint32_t, uint32_t id)
     wf_menu_manager_send_menu_items_done(menu_resource);
 }
 
-DECLARE_WAYFIRE_PLUGIN(wf::per_output_plugin_t<wf_menu>);
+DECLARE_WAYFIRE_PLUGIN(wf::per_output_plugin_t<wf::menu::wf_menu>);
