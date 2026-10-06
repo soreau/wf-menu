@@ -316,7 +316,6 @@ class wf_menu : public wf::per_output_plugin_instance_t
 
     wf::signal::connection_t<wf::view_mapped_signal> on_view_mapped = [=] (wf::view_mapped_signal *ev)
     {
-        ev->view->set_role(wf::VIEW_ROLE_TOPLEVEL);
         auto toplevel = wf::toplevel_cast(ev->view);
 
         if (!toplevel)
@@ -335,7 +334,7 @@ class wf_menu : public wf::per_output_plugin_instance_t
             toplevel->move(pos.x, pos.y);
             menu_view = ev->view;
             menu_view->connect(&on_view_unmapped);
-            menu_view->connect(&on_view_activated);
+            wf::get_core().connect(&on_button_event);
             auto& pending = toplevel->toplevel()->pending();
             pending.margins  = {BORDER_PADDING, BORDER_PADDING, BORDER_PADDING, BORDER_PADDING};
             pending.geometry = wf::expand_geometry_by_margins(pending.geometry, pending.margins);
@@ -368,15 +367,15 @@ class wf_menu : public wf::per_output_plugin_instance_t
         }
     };
 
-    wf::signal::connection_t<wf::view_activated_state_signal> on_view_activated =
-        [=] (wf::view_activated_state_signal*)
+    wf::signal::connection_t<wf::input_event_signal<wlr_pointer_button_event>> on_button_event =
+        [=] (wf::input_event_signal<wlr_pointer_button_event> *ev)
     {
         if (auto toplevel = wf::toplevel_cast(menu_view))
         {
             if (!toplevel->activated)
             {
-                toplevel->close();
-                toplevel = nullptr;
+                menu_view->close();
+                menu_view = nullptr;
             }
         }
     };
@@ -530,6 +529,7 @@ class wf_menu : public wf::per_output_plugin_instance_t
     {
         on_view_mapped.disconnect();
         on_show_menu.disconnect();
+        on_button_event.disconnect();
         wl_global_remove(menu_global);
         wl_global_destroy(menu_global);
     }
