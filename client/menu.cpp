@@ -199,5 +199,5 @@ void DynamicMenuWindow::on_menu_item_clicked(const std::string& item_name, uint3
 {
     std::cout << "Menu item activated: " << action_id << ": " << item_name << std::endl;
     wf_menu_manager_action_request(menu_manager, active_view_id, action_id, item_name.c_str());
-    set_visible(false); // Close menu on leaf item selection
+    close(); // Close menu on leaf item selection
 }
