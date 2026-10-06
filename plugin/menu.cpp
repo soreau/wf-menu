@@ -280,6 +280,8 @@ class wf_menu : public wf::per_output_plugin_instance_t
 
         barrel_roll_progression = barrel_roll_animation_t(wf::create_option<int>(1500));
         workspace_switch_progression = workspace_switch_animation_t(wf::create_option<int>(1500));
+
+        rebuild_menu();
     }
 
     void rebuild_menu()
@@ -325,22 +327,36 @@ class wf_menu : public wf::per_output_plugin_instance_t
 
         if (toplevel->get_app_id() == "wf-menu")
         {
+            menu_view = ev->view;
             /* Skip taskbar */
             wf::view_unmapped_signal unmap_signal;
-            unmap_signal.view = ev->view;
+            unmap_signal.view = menu_view;
             wf::get_core().emit(&unmap_signal);
-            /* Move top left of menu to mouse cursor position */
-            auto pos = output->get_cursor_position();
-            toplevel->move(pos.x, pos.y);
-            menu_view = ev->view;
+            if (!parent_view)
+            {
+                /* Center the window on the output */
+                auto og = output->get_relative_geometry();
+                auto vg = toplevel->get_geometry();
+                toplevel->move((og.width - vg.width) / 2.0, (og.height - vg.height) / 2.0);
+            } else
+            {
+                /* Move top left of menu to mouse cursor position */
+                auto pos = output->get_cursor_position();
+                toplevel->move(pos.x, pos.y);
+            }
+
+            /* Connect signals */
             menu_view->connect(&on_view_unmapped);
             wf::get_core().connect(&on_button_event);
+            /* Add padding to surface for shadow rendering */
             auto& pending = toplevel->toplevel()->pending();
             pending.margins  = {BORDER_PADDING, BORDER_PADDING, BORDER_PADDING, BORDER_PADDING};
             pending.geometry = wf::expand_geometry_by_margins(pending.geometry, pending.margins);
             wf::get_core().tx_manager->schedule_object(toplevel->toplevel());
+            /* Move to very topmost layer */
             wf::scene::readd_front(output->node_for_layer(wf::scene::layer::LOCK),
                 menu_view->get_root_node());
+            /* Add drop shadow */
             auto shadow = std::make_shared<simple_shadow_node_t>(toplevel);
             wf::scene::add_back(menu_view->get_surface_root_node(), shadow);
         }
@@ -401,6 +417,18 @@ class wf_menu : public wf::per_output_plugin_instance_t
         LOGI("action_request: ", action_id, ": ", action);
 
         wayfire_view view = nullptr;
+
+        if (!parent_view)
+        {
+            LOGD("No parent view for menu, trying for focused view..");
+            parent_view = wf::get_core().seat->get_active_view();
+
+            if (!parent_view)
+            {
+                parent_view = menu_view;
+            }
+        }
+
         if (parent_view)
         {
             view = parent_view;
@@ -411,13 +439,13 @@ class wf_menu : public wf::per_output_plugin_instance_t
             {
                 if (view_id == v->get_id())
                 {
-                    view = v;
+                    parent_view = view = v;
                     break;
                 }
             }
         }
 
-        if (!view)
+        if (!view || (view == menu_view))
         {
             LOGD("No view found for menu.");
             return;
@@ -473,16 +501,7 @@ class wf_menu : public wf::per_output_plugin_instance_t
 
     wf::effect_hook_t workspace_switch_animation_hook = [=] ()
     {
-        auto transform = parent_view->get_transformed_node()
-            ->get_transformer<wf::scene::view_2d_transformer_t>(workspace_switch_transformer_name);
-        auto progress = workspace_switch_progression.progress();
-        progress = 1.0 - std::pow(progress, 1.0 - progress);
-        parent_view->get_transformed_node()->begin_transform_update();
-        transform->translation_x = (workspace_from_geometry.x - workspace_to_geometry.x) * progress;
-        transform->translation_y = (workspace_from_geometry.y - workspace_to_geometry.y) * progress;
-        parent_view->get_transformed_node()->end_transform_update();
-
-        if (!workspace_switch_progression.running())
+        if (!parent_view || !workspace_switch_progression.running())
         {
             if (parent_view)
             {
@@ -493,11 +512,31 @@ class wf_menu : public wf::per_output_plugin_instance_t
             return;
         }
 
+        auto transform = parent_view->get_transformed_node()
+            ->get_transformer<wf::scene::view_2d_transformer_t>(workspace_switch_transformer_name);
+        auto progress = workspace_switch_progression.progress();
+        progress = 1.0 - std::pow(progress, 1.0 - progress);
+        parent_view->get_transformed_node()->begin_transform_update();
+        transform->translation_x = (workspace_from_geometry.x - workspace_to_geometry.x) * progress;
+        transform->translation_y = (workspace_from_geometry.y - workspace_to_geometry.y) * progress;
+        parent_view->get_transformed_node()->end_transform_update();
+
         output->render->schedule_redraw();
     };
 
     wf::effect_hook_t barrel_roll_animation_hook = [=] ()
     {
+        if (!parent_view || !barrel_roll_progression.running())
+        {
+            if (parent_view)
+            {
+                parent_view->get_transformed_node()->rem_transformer(barrel_roll_transformer_name);
+            }
+
+            output->render->rem_effect(&barrel_roll_animation_hook);
+            return;
+        }
+
         auto transform = parent_view->get_transformed_node()
             ->get_transformer<wf::scene::view_2d_transformer_t>(barrel_roll_transformer_name);
         auto progress = barrel_roll_progression.progress();
@@ -510,17 +549,6 @@ class wf_menu : public wf::per_output_plugin_instance_t
         parent_view->get_transformed_node()->begin_transform_update();
         transform->angle = progress * M_PI * 2.0;
         parent_view->get_transformed_node()->end_transform_update();
-
-        if (!barrel_roll_progression.running())
-        {
-            if (parent_view)
-            {
-                parent_view->get_transformed_node()->rem_transformer(barrel_roll_transformer_name);
-            }
-
-            output->render->rem_effect(&barrel_roll_animation_hook);
-            return;
-        }
 
         output->render->schedule_redraw();
     };
