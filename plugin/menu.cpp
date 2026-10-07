@@ -40,8 +40,11 @@
 #include <wayfire/txn/transaction-manager.hpp>
 #include <wayfire/plugins/common/shared-core-data.hpp>
 
-#include "wf-menu-server-protocol.h"
+#include <linux/input-event-codes.h>
 
+#include "wf-cube-control-signal.hpp"
+#include "wf-menu-server-protocol.h"
+#include "wf-menu-actions.hpp"
 
 #define BORDER_PADDING 20.0
 
@@ -266,43 +269,40 @@ class wf_menu : public wf::per_output_plugin_instance_t
     barrel_roll_animation_t barrel_roll_progression;
     workspace_switch_animation_t workspace_switch_progression;
     wf::geometry_t workspace_from_geometry, workspace_to_geometry;
+    wayfire_view barrel_roll_view, workspace_switch_view;
     wl_global *menu_global;
+    cube_spin_animation_t cube_spin_animation{wf::create_option<int>(1500)};
+    cube_spin_state cube_state = CUBE_SPIN_DISABLED;
+    bool cube_spin_hook_set    = false;
 
   public:
     void init() override
     {
+        menu_view   = parent_view = nullptr;
         menu_global = wl_global_create(wf::get_core().display,
             &wf_menu_manager_interface,
             1, this, bind_menu);
 
+        wf::get_core().connect(&on_button_event);
         wf::get_core().connect(&on_view_mapped);
         wf::get_core().connect(&on_show_menu);
 
         barrel_roll_progression = barrel_roll_animation_t(wf::create_option<int>(1500));
         workspace_switch_progression = workspace_switch_animation_t(wf::create_option<int>(1500));
 
-        rebuild_menu();
+        prepare_desktop_menu();
     }
 
-    void rebuild_menu()
+    void prepare_desktop_menu()
     {
         int i = 1;
         auto workspace_grid_size = output->wset()->get_workspace_grid_size();
 
         menu_items.clear();
 
-        menu_items.push_back({i++, "Minimize"});
-        if (parent_view && wf::toplevel_cast(parent_view) &&
-            wf::toplevel_cast(parent_view)->pending_tiled_edges())
-        {
-            menu_items.push_back({i++, "Unmaximize"});
-        } else
-        {
-            menu_items.push_back({i++, "Maximize"});
-        }
-
-        menu_items.push_back({i++, "Close"});
-        menu_items.push_back({0, "Send to Workspace"});
+        menu_items.push_back({i++, DESKTOP_CHANGE_BG});
+        menu_items.push_back({i++, DESKTOP_LAUNCH_WCM});
+        menu_items.push_back({0, DESKTOP_MOVE_TO_WORKSPACE});
         for (int y = 1; y <= workspace_grid_size.height; y++)
         {
             for (int x = 1; x <= workspace_grid_size.width; x++)
@@ -313,7 +313,40 @@ class wf_menu : public wf::per_output_plugin_instance_t
         }
 
         menu_items.push_back({0, ""});
-        menu_items.push_back({i++, "Do a Barrel Roll"});
+        menu_items.push_back({i++, DESKTOP_CUBE_SPIN});
+        menu_items.push_back({i++, DESKTOP_DO_A_BARREL_ROLL});
+    }
+
+    void prepare_wm_menu()
+    {
+        int i = 1;
+        auto workspace_grid_size = output->wset()->get_workspace_grid_size();
+
+        menu_items.clear();
+
+        menu_items.push_back({i++, WM_MINIMIZE});
+        if (parent_view && wf::toplevel_cast(parent_view) &&
+            wf::toplevel_cast(parent_view)->pending_tiled_edges())
+        {
+            menu_items.push_back({i++, WM_UNMAXIMIZE});
+        } else
+        {
+            menu_items.push_back({i++, WM_MAXIMIZE});
+        }
+
+        menu_items.push_back({i++, WM_CLOSE});
+        menu_items.push_back({0, WM_SEND_TO_WORKSPACE});
+        for (int y = 1; y <= workspace_grid_size.height; y++)
+        {
+            for (int x = 1; x <= workspace_grid_size.width; x++)
+            {
+                menu_items.push_back({i++,
+                    "Workspace [" + std::to_string(x) + "," + std::to_string(y) + "]"});
+            }
+        }
+
+        menu_items.push_back({0, ""});
+        menu_items.push_back({i++, WM_DO_A_BARREL_ROLL});
     }
 
     wf::signal::connection_t<wf::view_mapped_signal> on_view_mapped = [=] (wf::view_mapped_signal *ev)
@@ -327,27 +360,27 @@ class wf_menu : public wf::per_output_plugin_instance_t
 
         if (toplevel->get_app_id() == "wf-menu")
         {
-            menu_view = ev->view;
-            /* Skip taskbar */
-            wf::view_unmapped_signal unmap_signal;
-            unmap_signal.view = menu_view;
-            wf::get_core().emit(&unmap_signal);
-            if (!parent_view)
+            if (parent_view)
+            {
+                /* Move top left of menu to mouse cursor position */
+                auto pos = output->get_cursor_position();
+                toplevel->move(pos.x, pos.y);
+            } else
             {
                 /* Center the window on the output */
                 auto og = output->get_relative_geometry();
                 auto vg = toplevel->get_geometry();
                 toplevel->move((og.width - vg.width) / 2.0, (og.height - vg.height) / 2.0);
-            } else
-            {
-                /* Move top left of menu to mouse cursor position */
-                auto pos = output->get_cursor_position();
-                toplevel->move(pos.x, pos.y);
             }
 
+            menu_view = ev->view;
+
+            /* Skip taskbar */
+            wf::view_unmapped_signal unmap_signal;
+            unmap_signal.view = menu_view;
+            wf::get_core().emit(&unmap_signal);
             /* Connect signals */
             menu_view->connect(&on_view_unmapped);
-            wf::get_core().connect(&on_button_event);
             /* Add padding to surface for shadow rendering */
             auto& pending = toplevel->toplevel()->pending();
             pending.margins  = {BORDER_PADDING, BORDER_PADDING, BORDER_PADDING, BORDER_PADDING};
@@ -359,6 +392,10 @@ class wf_menu : public wf::per_output_plugin_instance_t
             /* Add drop shadow */
             auto shadow = std::make_shared<simple_shadow_node_t>(toplevel);
             wf::scene::add_back(menu_view->get_surface_root_node(), shadow);
+            (parent_view &&
+                parent_view->role !=
+                wf::VIEW_ROLE_DESKTOP_ENVIRONMENT) ? prepare_wm_menu() : prepare_desktop_menu();
+            send_menu_items();
         }
     };
 
@@ -370,64 +407,192 @@ class wf_menu : public wf::per_output_plugin_instance_t
             {
                 menu_view->close();
                 menu_view = nullptr;
+                on_view_unmapped.disconnect();
             }
 
             parent_view = nullptr;
-
             return;
         }
 
         if (ev->view == menu_view)
         {
-            menu_view = nullptr;
+            menu_view   = nullptr;
+            parent_view = nullptr;
+            on_view_unmapped.disconnect();
         }
     };
 
     wf::signal::connection_t<wf::input_event_signal<wlr_pointer_button_event>> on_button_event =
         [=] (wf::input_event_signal<wlr_pointer_button_event> *ev)
     {
+        if (ev->event->state != WL_POINTER_BUTTON_STATE_PRESSED)
+        {
+            return;
+        }
+
         if (auto toplevel = wf::toplevel_cast(menu_view))
         {
             if (!toplevel->activated)
             {
                 menu_view->close();
-                menu_view = nullptr;
+                menu_view   = nullptr;
+                parent_view = nullptr;
             }
         }
+
+        if (ev->event->button != BTN_RIGHT)
+        {
+            if (menu_view && (menu_view != wf::get_core().get_cursor_focus_view()))
+            {
+                on_view_unmapped.disconnect();
+                menu_view->close();
+                menu_view   = nullptr;
+                parent_view = nullptr;
+            }
+
+            return;
+        }
+
+        auto focused_view = wf::get_core().get_cursor_focus_view();
+        if (focused_view && (focused_view->role == wf::VIEW_ROLE_DESKTOP_ENVIRONMENT))
+        {
+            wf::view_show_window_menu_signal data;
+            data.view = focused_view;
+            on_show_menu.emit(&data);
+            return;
+        }
+
+        parent_view = nullptr;
     };
 
     wf::signal::connection_t<wf::view_show_window_menu_signal> on_show_menu =
         [=] (wf::view_show_window_menu_signal *data)
     {
+        if (workspace_switch_view && workspace_switch_progression.running())
+        {
+            workspace_switch_view->get_transformed_node()->rem_transformer(workspace_switch_transformer_name);
+            workspace_switch_view = nullptr;
+        }
+
+        if (barrel_roll_view && barrel_roll_progression.running())
+        {
+            barrel_roll_view->get_transformed_node()->rem_transformer(barrel_roll_transformer_name);
+            barrel_roll_view = nullptr;
+        }
+
         if (menu_view)
         {
             menu_view->close();
-            menu_view = nullptr;
+            menu_view   = nullptr;
+            parent_view = nullptr;
+        }
+
+        if (data)
+        {
+            parent_view = data->view;
+            if (parent_view)
+            {
+                parent_view->connect(&on_view_unmapped);
+            }
         }
 
         /* This assumes wf-menu is exectable and the containing directory is in $PATH */
         wf::get_core().run("wf-menu");
-        parent_view = data->view;
-        parent_view->connect(&on_view_unmapped);
-        rebuild_menu();
     };
 
-    void do_action(uint32_t view_id, uint32_t action_id, std::string action)
+    void send_menu_items()
     {
-        LOGI("action_request: ", action_id, ": ", action);
-
-        wayfire_view view = nullptr;
-
-        if (!parent_view)
+        uint32_t view_id = 0;
+        if (parent_view)
         {
-            LOGD("No parent view for menu, trying for focused view..");
-            parent_view = wf::get_core().seat->get_active_view();
-
-            if (!parent_view)
-            {
-                parent_view = menu_view;
-            }
+            view_id = parent_view->get_id();
         }
+
+        // Send the menu items to the menu client
+        wf_menu_manager_send_menu_items_start(menu_resource, view_id);
+        for (size_t i = 0; i < menu_items.size(); i++)
+        {
+            auto item = menu_items[i];
+
+            if (item.first == 0)
+            {
+                wf_menu_manager_send_menu_item(menu_resource, item.first, item.second.c_str());
+                while (i < menu_items.size())
+                {
+                    auto subitem = menu_items[++i];
+                    if ((subitem.first == 0) || subitem.second.empty())
+                    {
+                        break;
+                    }
+
+                    wf_menu_manager_send_submenu_item(menu_resource, subitem.first, subitem.second.c_str());
+                }
+
+                continue;
+            }
+
+            wf_menu_manager_send_menu_item(menu_resource, item.first, item.second.c_str());
+        }
+
+        wf_menu_manager_send_menu_items_done(menu_resource);
+        menu_items.clear();
+    }
+
+    bool handle_desktop_action(std::string action)
+    {
+        if (action == DESKTOP_CHANGE_BG)
+        {
+            wf::get_core().run("killall -USR1 wf-background");
+            parent_view = nullptr;
+            return true;
+        } else if (action == DESKTOP_LAUNCH_WCM)
+        {
+            wf::get_core().run("wcm");
+            parent_view = nullptr;
+            return true;
+        } else if (action.substr(0, std::string("Workspace").size()) == "Workspace")
+        {
+            int x, y;
+            int parsed = std::sscanf(action.c_str(), "Workspace [%d,%d]", &x, &y);
+            if (parsed == 2)
+            {
+                output->wset()->request_workspace({x - 1, y - 1});
+                parent_view = nullptr;
+                return true;
+            }
+        } else if (action == DESKTOP_CUBE_SPIN)
+        {
+            parent_view = nullptr;
+            cube_spin_start();
+            return true;
+        } else if ((action == DESKTOP_DO_A_BARREL_ROLL) && parent_view &&
+                   (parent_view->role == wf::VIEW_ROLE_DESKTOP_ENVIRONMENT))
+        {
+            barrel_roll_progression.start();
+
+            barrel_roll_clockwise = false;
+            if (wf::get_current_time() % 2)
+            {
+                barrel_roll_clockwise = true;
+            }
+
+            barrel_roll_view = parent_view;
+            parent_view == nullptr;
+
+            auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(barrel_roll_view);
+            barrel_roll_view->get_transformed_node()->add_transformer(
+                tr, wf::TRANSFORMER_2D, barrel_roll_transformer_name);
+            output->render->add_effect(&barrel_roll_animation, wf::OUTPUT_EFFECT_PRE);
+            return true;
+        }
+
+        parent_view = nullptr;
+        return false;
+    }
+
+    bool handle_wm_action(uint32_t view_id, std::string action)
+    {
+        wayfire_view view = nullptr;
 
         if (parent_view)
         {
@@ -445,24 +610,32 @@ class wf_menu : public wf::per_output_plugin_instance_t
             }
         }
 
-        if (!view || (view == menu_view))
+        if (!view)
         {
             LOGD("No view found for menu.");
-            return;
+            return false;
         }
 
-        if (action == "Minimize")
+        if (action == WM_MINIMIZE)
         {
             wf::get_core().default_wm->minimize_request(wf::toplevel_cast(view), true);
-        } else if (action == "Unmaximize")
+            parent_view = nullptr;
+            return true;
+        } else if (action == WM_UNMAXIMIZE)
         {
             wf::get_core().default_wm->tile_request(wf::toplevel_cast(view), 0);
-        } else if (action == "Maximize")
+            parent_view = nullptr;
+            return true;
+        } else if (action == WM_MAXIMIZE)
         {
             wf::get_core().default_wm->tile_request(wf::toplevel_cast(view), wf::TILED_EDGES_ALL);
-        } else if (action == "Close")
+            parent_view = nullptr;
+            return true;
+        } else if (action == WM_CLOSE)
         {
             view->close();
+            parent_view = nullptr;
+            return true;
         } else if (action.substr(0, std::string("Workspace").size()) == "Workspace")
         {
             if (auto toplevel = wf::toplevel_cast(view))
@@ -476,13 +649,17 @@ class wf_menu : public wf::per_output_plugin_instance_t
                     workspace_to_geometry = toplevel->get_geometry();
                     workspace_switch_progression.start();
 
-                    auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(view);
-                    view->get_transformed_node()->add_transformer(
+                    workspace_switch_view = view;
+                    parent_view == nullptr;
+
+                    auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(workspace_switch_view);
+                    workspace_switch_view->get_transformed_node()->add_transformer(
                         tr, wf::TRANSFORMER_2D, workspace_switch_transformer_name);
-                    output->render->add_effect(&workspace_switch_animation_hook, wf::OUTPUT_EFFECT_PRE);
+                    output->render->add_effect(&workspace_switch_animation, wf::OUTPUT_EFFECT_PRE);
+                    return true;
                 }
             }
-        } else if (action == "Do a Barrel Roll")
+        } else if (action == WM_DO_A_BARREL_ROLL)
         {
             barrel_roll_progression.start();
 
@@ -492,53 +669,178 @@ class wf_menu : public wf::per_output_plugin_instance_t
                 barrel_roll_clockwise = true;
             }
 
-            auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(view);
-            view->get_transformed_node()->add_transformer(
+            barrel_roll_view = view;
+            parent_view == nullptr;
+
+            auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(barrel_roll_view);
+            barrel_roll_view->get_transformed_node()->add_transformer(
                 tr, wf::TRANSFORMER_2D, barrel_roll_transformer_name);
-            output->render->add_effect(&barrel_roll_animation_hook, wf::OUTPUT_EFFECT_PRE);
+            output->render->add_effect(&barrel_roll_animation, wf::OUTPUT_EFFECT_PRE);
+            return true;
         }
+
+        parent_view = nullptr;
+        return false;
     }
 
-    wf::effect_hook_t workspace_switch_animation_hook = [=] ()
+    void handle_action(uint32_t view_id, uint32_t action_id, std::string action)
     {
-        if (!parent_view || !workspace_switch_progression.running())
+        if (handle_wm_action(view_id, action))
         {
-            if (parent_view)
-            {
-                parent_view->get_transformed_node()->rem_transformer(workspace_switch_transformer_name);
-            }
-
-            output->render->rem_effect(&workspace_switch_animation_hook);
             return;
         }
 
-        auto transform = parent_view->get_transformed_node()
+        handle_desktop_action(action);
+    }
+
+    void cube_spin_terminate()
+    {
+        cube_control_signal data;
+        data.angle = 0.0;
+        data.zoom  = CUBE_ZOOM_BASE;
+        data.ease  = 0.0;
+        data.last_frame  = true;
+        data.carried_out = false;
+
+        output->emit(&data);
+        if (cube_spin_hook_set)
+        {
+            output->render->rem_effect(&cube_spin_frame);
+            cube_spin_hook_set = false;
+        }
+
+        cube_state = CUBE_SPIN_DISABLED;
+    }
+
+    void cube_spin_start()
+    {
+        cube_control_signal data;
+        data.angle = 0.0;
+        data.zoom  = CUBE_ZOOM_BASE;
+        data.ease  = 0.0;
+        data.last_frame  = false;
+        data.carried_out = false;
+
+        output->emit(&data);
+        if (data.carried_out)
+        {
+            if (!cube_spin_hook_set)
+            {
+                output->render->add_effect(
+                    &cube_spin_frame, wf::OUTPUT_EFFECT_PRE);
+                cube_spin_hook_set = true;
+            }
+        }
+
+        cube_state = CUBE_SPIN_RUNNING;
+
+        cube_spin_animation.rot.set(cube_spin_animation.rot, M_PI * 2.0);
+        cube_spin_animation.zoom.set(CUBE_ZOOM_BASE, CUBE_ZOOM_MAX);
+        cube_spin_animation.ease.set(0.0, 1.0);
+        cube_spin_animation.start();
+    }
+
+    void cube_spin_stop()
+    {
+        cube_state = CUBE_SPIN_STOPPING;
+
+        cube_spin_animation.rot.set(0.0, 0.0);
+        cube_spin_animation.zoom.restart_with_end(CUBE_ZOOM_BASE);
+        cube_spin_animation.ease.restart_with_end(0.0);
+        cube_spin_animation.start();
+    }
+
+    wf::effect_hook_t cube_spin_frame = [=] ()
+    {
+        cube_control_signal data;
+
+        if ((cube_state == CUBE_SPIN_STOPPING) && !cube_spin_animation.running())
+        {
+            cube_spin_terminate();
+            return;
+        }
+
+        auto rotation = cube_spin_animation.rot;
+
+        data.angle = rotation;
+        data.zoom  = cube_spin_animation.zoom;
+        data.ease  = cube_spin_animation.ease;
+        data.last_frame  = false;
+        data.carried_out = false;
+
+        output->emit(&data);
+        if (!data.carried_out)
+        {
+            cube_spin_terminate();
+
+            return;
+        }
+
+        if (rotation >= M_PI * 2.0)
+        {
+            cube_spin_stop();
+        }
+    };
+
+    wf::effect_hook_t workspace_switch_animation = [=] ()
+    {
+        if (!workspace_switch_view || !workspace_switch_progression.running())
+        {
+            if (workspace_switch_view)
+            {
+                workspace_switch_view->get_transformed_node()->rem_transformer(
+                    workspace_switch_transformer_name);
+                workspace_switch_view = nullptr;
+            }
+
+            output->render->rem_effect(&workspace_switch_animation);
+            return;
+        }
+
+        auto transform = workspace_switch_view->get_transformed_node()
             ->get_transformer<wf::scene::view_2d_transformer_t>(workspace_switch_transformer_name);
+
+        if (!transform)
+        {
+            workspace_switch_view->get_transformed_node()->rem_transformer(workspace_switch_transformer_name);
+            output->render->rem_effect(&workspace_switch_animation);
+            return;
+        }
+
         auto progress = workspace_switch_progression.progress();
         progress = 1.0 - std::pow(progress, 1.0 - progress);
-        parent_view->get_transformed_node()->begin_transform_update();
+        workspace_switch_view->get_transformed_node()->begin_transform_update();
         transform->translation_x = (workspace_from_geometry.x - workspace_to_geometry.x) * progress;
         transform->translation_y = (workspace_from_geometry.y - workspace_to_geometry.y) * progress;
-        parent_view->get_transformed_node()->end_transform_update();
+        workspace_switch_view->get_transformed_node()->end_transform_update();
 
         output->render->schedule_redraw();
     };
 
-    wf::effect_hook_t barrel_roll_animation_hook = [=] ()
+    wf::effect_hook_t barrel_roll_animation = [=] ()
     {
-        if (!parent_view || !barrel_roll_progression.running())
+        if (!barrel_roll_view || !barrel_roll_progression.running())
         {
-            if (parent_view)
+            if (barrel_roll_view)
             {
-                parent_view->get_transformed_node()->rem_transformer(barrel_roll_transformer_name);
+                barrel_roll_view->get_transformed_node()->rem_transformer(barrel_roll_transformer_name);
+                barrel_roll_view = nullptr;
             }
 
-            output->render->rem_effect(&barrel_roll_animation_hook);
+            output->render->rem_effect(&barrel_roll_animation);
             return;
         }
 
-        auto transform = parent_view->get_transformed_node()
+        auto transform = barrel_roll_view->get_transformed_node()
             ->get_transformer<wf::scene::view_2d_transformer_t>(barrel_roll_transformer_name);
+
+        if (!transform)
+        {
+            barrel_roll_view->get_transformed_node()->rem_transformer(barrel_roll_transformer_name);
+            output->render->rem_effect(&barrel_roll_animation);
+            return;
+        }
+
         auto progress = barrel_roll_progression.progress();
         std::pow(1.0 - progress, progress);
         if (barrel_roll_clockwise)
@@ -546,9 +848,9 @@ class wf_menu : public wf::per_output_plugin_instance_t
             progress = 1.0 - progress;
         }
 
-        parent_view->get_transformed_node()->begin_transform_update();
+        barrel_roll_view->get_transformed_node()->begin_transform_update();
         transform->angle = progress * M_PI * 2.0;
-        parent_view->get_transformed_node()->end_transform_update();
+        barrel_roll_view->get_transformed_node()->end_transform_update();
 
         output->render->schedule_redraw();
     };
@@ -569,7 +871,7 @@ void handle_action_request(wl_client*, wl_resource *resource, uint32_t view_id, 
     const char *action)
 {
     wf::menu::wf_menu *menu = (wf::menu::wf_menu*)wl_resource_get_user_data(resource);
-    menu->do_action(view_id, action_id, action);
+    menu->handle_action(view_id, action_id, action);
 }
 
 static struct wf_menu_manager_interface wf_menu_impl =
@@ -579,58 +881,35 @@ static struct wf_menu_manager_interface wf_menu_impl =
 
 static void handle_menu_destroy(wl_resource *listener)
 {
-    menu_resource = NULL;
-    menu_view     = nullptr;
+    if (menu_view)
+    {
+        menu_resource = NULL;
+        menu_view     = nullptr;
+    }
 }
 
 static void bind_menu(wl_client *client, void *data, uint32_t, uint32_t id)
 {
+    wf::menu::wf_menu *menu = (wf::menu::wf_menu*)data;
+
     if (menu_resource)
     {
-        return;
+        if (menu_view)
+        {
+            menu->on_view_unmapped.disconnect();
+            menu_view->close();
+            menu_view   = nullptr;
+            parent_view = nullptr;
+        }
     }
 
-    LOGI("Binding wf-menu");
     auto resource = wl_resource_create(client, &wf_menu_manager_interface, 1, id);
 
     wl_resource_set_implementation(resource, &wf_menu_impl, data, handle_menu_destroy);
     menu_resource = resource;
 
-    auto active_view = wf::get_core().seat->get_active_view();
-    uint32_t view_id = 0;
-    if (active_view)
-    {
-        view_id     = active_view->get_id();
-        parent_view = active_view;
-    }
-
-    // Send the menu items to the menu client
-    wf_menu_manager_send_menu_items_start(menu_resource, view_id);
-    for (size_t i = 0; i < menu_items.size(); i++)
-    {
-        auto item = menu_items[i];
-
-        if (item.first == 0)
-        {
-            wf_menu_manager_send_menu_item(menu_resource, item.first, item.second.c_str());
-            while (i < menu_items.size())
-            {
-                auto subitem = menu_items[++i];
-                if ((subitem.first == 0) || subitem.second.empty())
-                {
-                    break;
-                }
-
-                wf_menu_manager_send_submenu_item(menu_resource, subitem.first, subitem.second.c_str());
-            }
-
-            continue;
-        }
-
-        wf_menu_manager_send_menu_item(menu_resource, item.first, item.second.c_str());
-    }
-
-    wf_menu_manager_send_menu_items_done(menu_resource);
+    parent_view ? menu->prepare_wm_menu() : menu->prepare_desktop_menu();
+    menu->send_menu_items();
 }
 
 DECLARE_WAYFIRE_PLUGIN(wf::per_output_plugin_t<wf::menu::wf_menu>);

@@ -4,6 +4,7 @@
 #include <gdk/wayland/gdkwayland.h>
 
 #include "wf-menu-client-protocol.h"
+#include "wf-menu-actions.hpp"
 
 static wf_menu_manager *menu_manager;
 static std::vector<MenuItemConfig> menu_structure;
@@ -13,6 +14,7 @@ static void handle_menu_items_start(void *data, wf_menu_manager *wf_menu_manager
 {
     printf("%s\n", __func__);
     active_view_id = view_id;
+    menu_structure.clear();
 }
 
 static void handle_menu_item(void *data, wf_menu_manager *wf_menu_manager, uint32_t action_id,
