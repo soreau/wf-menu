@@ -371,6 +371,14 @@ class wf_menu : public wf::per_output_plugin_instance_t
                 auto og = output->get_relative_geometry();
                 auto vg = toplevel->get_geometry();
                 toplevel->move((og.width - vg.width) / 2.0, (og.height - vg.height) / 2.0);
+                for (auto v : wf::get_core().get_all_views())
+                {
+                    if (v->get_app_id() == "gtk4-layer-shell")
+                    {
+                        parent_view = v;
+                        break;
+                    }
+                }
             }
 
             menu_view = ev->view;
