@@ -263,7 +263,7 @@ class simple_shadow_node_t : public wf::scene::node_t
     }
 };
 
-class wf_menu : public wf::per_output_plugin_instance_t
+class wf_menu : public wf::plugin_interface_t
 {
     bool barrel_roll_clockwise;
     barrel_roll_animation_t barrel_roll_progression;
@@ -296,6 +296,12 @@ class wf_menu : public wf::per_output_plugin_instance_t
     void prepare_desktop_menu()
     {
         int i = 1;
+        auto output = wf::get_core().seat->get_active_output();
+        if (!output)
+        {
+            return;
+        }
+
         auto workspace_grid_size = output->wset()->get_workspace_grid_size();
 
         menu_items.clear();
@@ -320,6 +326,12 @@ class wf_menu : public wf::per_output_plugin_instance_t
     void prepare_wm_menu()
     {
         int i = 1;
+        auto output = wf::get_core().seat->get_active_output();
+        if (!output)
+        {
+            return;
+        }
+
         auto workspace_grid_size = output->wset()->get_workspace_grid_size();
 
         menu_items.clear();
@@ -360,28 +372,35 @@ class wf_menu : public wf::per_output_plugin_instance_t
 
         if (toplevel->get_app_id() == "wf-menu")
         {
+            menu_view = ev->view;
+            auto output = menu_view->get_output();
+
             if (parent_view)
             {
                 /* Move top left of menu to mouse cursor position */
-                auto pos = output->get_cursor_position();
-                toplevel->move(pos.x, pos.y);
+                if (output)
+                {
+                    auto pos = output->get_cursor_position();
+                    toplevel->move(pos.x, pos.y);
+                }
             } else
             {
                 /* Center the window on the output */
-                auto og = output->get_relative_geometry();
-                auto vg = toplevel->get_geometry();
-                toplevel->move((og.width - vg.width) / 2.0, (og.height - vg.height) / 2.0);
-                for (auto v : wf::get_core().get_all_views())
+                if (output)
                 {
-                    if (v->get_app_id() == "gtk4-layer-shell")
+                    auto og = output->get_relative_geometry();
+                    auto vg = toplevel->get_geometry();
+                    toplevel->move((og.width - vg.width) / 2.0, (og.height - vg.height) / 2.0);
+                    for (auto v : wf::get_core().get_all_views())
                     {
-                        parent_view = v;
-                        break;
+                        if (v->get_app_id() == "gtk4-layer-shell")
+                        {
+                            parent_view = v;
+                            break;
+                        }
                     }
                 }
             }
-
-            menu_view = ev->view;
 
             /* Skip taskbar */
             wf::view_unmapped_signal unmap_signal;
@@ -395,8 +414,12 @@ class wf_menu : public wf::per_output_plugin_instance_t
             pending.geometry = wf::expand_geometry_by_margins(pending.geometry, pending.margins);
             wf::get_core().tx_manager->schedule_object(toplevel->toplevel());
             /* Move to very topmost layer */
-            wf::scene::readd_front(output->node_for_layer(wf::scene::layer::LOCK),
-                menu_view->get_root_node());
+            if (output)
+            {
+                wf::scene::readd_front(output->node_for_layer(wf::scene::layer::LOCK),
+                    menu_view->get_root_node());
+            }
+
             /* Add drop shadow */
             auto shadow = std::make_shared<simple_shadow_node_t>(toplevel);
             wf::scene::add_back(menu_view->get_surface_root_node(), shadow);
@@ -495,13 +518,10 @@ class wf_menu : public wf::per_output_plugin_instance_t
             parent_view = nullptr;
         }
 
-        if (data)
+        parent_view = data->view;
+        if (parent_view)
         {
-            parent_view = data->view;
-            if (parent_view)
-            {
-                parent_view->connect(&on_view_unmapped);
-            }
+            parent_view->connect(&on_view_unmapped);
         }
 
         /* This assumes wf-menu is exectable and the containing directory is in $PATH */
@@ -564,9 +584,12 @@ class wf_menu : public wf::per_output_plugin_instance_t
             int parsed = std::sscanf(action.c_str(), "Workspace [%d,%d]", &x, &y);
             if (parsed == 2)
             {
-                output->wset()->request_workspace({x - 1, y - 1});
-                parent_view = nullptr;
-                return true;
+                if (auto output = wf::get_core().seat->get_active_output())
+                {
+                    output->wset()->request_workspace({x - 1, y - 1});
+                    parent_view = nullptr;
+                    return true;
+                }
             }
         } else if (action == DESKTOP_CUBE_SPIN)
         {
@@ -587,11 +610,14 @@ class wf_menu : public wf::per_output_plugin_instance_t
             barrel_roll_view = parent_view;
             parent_view == nullptr;
 
-            auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(barrel_roll_view);
-            barrel_roll_view->get_transformed_node()->add_transformer(
-                tr, wf::TRANSFORMER_2D, barrel_roll_transformer_name);
-            output->render->add_effect(&barrel_roll_animation, wf::OUTPUT_EFFECT_PRE);
-            return true;
+            if (auto output = wf::get_core().seat->get_active_output())
+            {
+                auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(barrel_roll_view);
+                barrel_roll_view->get_transformed_node()->add_transformer(
+                    tr, wf::TRANSFORMER_2D, barrel_roll_transformer_name);
+                output->render->add_effect(&barrel_roll_animation, wf::OUTPUT_EFFECT_PRE);
+                return true;
+            }
         }
 
         parent_view = nullptr;
@@ -652,23 +678,31 @@ class wf_menu : public wf::per_output_plugin_instance_t
                 int parsed = std::sscanf(action.c_str(), "Workspace [%d,%d]", &x, &y);
                 if (parsed == 2)
                 {
-                    workspace_from_geometry = toplevel->get_geometry();
-                    output->wset()->move_to_workspace(toplevel, {x - 1, y - 1});
-                    workspace_to_geometry = toplevel->get_geometry();
-                    workspace_switch_progression.start();
+                    if (auto output = view->get_output())
+                    {
+                        workspace_from_geometry = toplevel->get_geometry();
+                        output->wset()->move_to_workspace(toplevel, {x - 1, y - 1});
+                        workspace_to_geometry = toplevel->get_geometry();
+                        workspace_switch_progression.start();
 
-                    workspace_switch_view = view;
-                    parent_view == nullptr;
+                        workspace_switch_view = view;
+                        parent_view == nullptr;
 
-                    auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(workspace_switch_view);
-                    workspace_switch_view->get_transformed_node()->add_transformer(
-                        tr, wf::TRANSFORMER_2D, workspace_switch_transformer_name);
-                    output->render->add_effect(&workspace_switch_animation, wf::OUTPUT_EFFECT_PRE);
-                    return true;
+                        auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(workspace_switch_view);
+                        workspace_switch_view->get_transformed_node()->add_transformer(
+                            tr, wf::TRANSFORMER_2D, workspace_switch_transformer_name);
+                        output->render->add_effect(&workspace_switch_animation, wf::OUTPUT_EFFECT_PRE);
+                        return true;
+                    }
                 }
             }
         } else if (action == WM_DO_A_BARREL_ROLL)
         {
+            if (!parent_view)
+            {
+                return false;
+            }
+
             barrel_roll_progression.start();
 
             barrel_roll_clockwise = false;
@@ -677,14 +711,17 @@ class wf_menu : public wf::per_output_plugin_instance_t
                 barrel_roll_clockwise = true;
             }
 
-            barrel_roll_view = view;
+            barrel_roll_view = parent_view;
             parent_view == nullptr;
 
-            auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(barrel_roll_view);
-            barrel_roll_view->get_transformed_node()->add_transformer(
-                tr, wf::TRANSFORMER_2D, barrel_roll_transformer_name);
-            output->render->add_effect(&barrel_roll_animation, wf::OUTPUT_EFFECT_PRE);
-            return true;
+            if (auto output = barrel_roll_view->get_output())
+            {
+                auto tr = std::make_shared<wf::scene::view_2d_transformer_t>(barrel_roll_view);
+                barrel_roll_view->get_transformed_node()->add_transformer(
+                    tr, wf::TRANSFORMER_2D, barrel_roll_transformer_name);
+                output->render->add_effect(&barrel_roll_animation, wf::OUTPUT_EFFECT_PRE);
+                return true;
+            }
         }
 
         parent_view = nullptr;
@@ -710,11 +747,14 @@ class wf_menu : public wf::per_output_plugin_instance_t
         data.last_frame  = true;
         data.carried_out = false;
 
-        output->emit(&data);
-        if (cube_spin_hook_set)
+        if (auto output = wf::get_core().seat->get_active_output())
         {
-            output->render->rem_effect(&cube_spin_frame);
-            cube_spin_hook_set = false;
+            output->emit(&data);
+            if (cube_spin_hook_set)
+            {
+                output->render->rem_effect(&cube_spin_frame);
+                cube_spin_hook_set = false;
+            }
         }
 
         cube_state = CUBE_SPIN_DISABLED;
@@ -729,14 +769,17 @@ class wf_menu : public wf::per_output_plugin_instance_t
         data.last_frame  = false;
         data.carried_out = false;
 
-        output->emit(&data);
-        if (data.carried_out)
+        if (auto output = wf::get_core().seat->get_active_output())
         {
-            if (!cube_spin_hook_set)
+            output->emit(&data);
+            if (data.carried_out)
             {
-                output->render->add_effect(
-                    &cube_spin_frame, wf::OUTPUT_EFFECT_PRE);
-                cube_spin_hook_set = true;
+                if (!cube_spin_hook_set)
+                {
+                    output->render->add_effect(
+                        &cube_spin_frame, wf::OUTPUT_EFFECT_PRE);
+                    cube_spin_hook_set = true;
+                }
             }
         }
 
@@ -776,7 +819,11 @@ class wf_menu : public wf::per_output_plugin_instance_t
         data.last_frame  = false;
         data.carried_out = false;
 
-        output->emit(&data);
+        if (auto output = wf::get_core().seat->get_active_output())
+        {
+            output->emit(&data);
+        }
+
         if (!data.carried_out)
         {
             cube_spin_terminate();
@@ -796,12 +843,16 @@ class wf_menu : public wf::per_output_plugin_instance_t
         {
             if (workspace_switch_view)
             {
+                if (auto output = workspace_switch_view->get_output())
+                {
+                    output->render->rem_effect(&workspace_switch_animation);
+                }
+
                 workspace_switch_view->get_transformed_node()->rem_transformer(
                     workspace_switch_transformer_name);
                 workspace_switch_view = nullptr;
             }
 
-            output->render->rem_effect(&workspace_switch_animation);
             return;
         }
 
@@ -811,7 +862,11 @@ class wf_menu : public wf::per_output_plugin_instance_t
         if (!transform)
         {
             workspace_switch_view->get_transformed_node()->rem_transformer(workspace_switch_transformer_name);
-            output->render->rem_effect(&workspace_switch_animation);
+            if (auto output = workspace_switch_view->get_output())
+            {
+                output->render->rem_effect(&workspace_switch_animation);
+            }
+
             return;
         }
 
@@ -822,7 +877,10 @@ class wf_menu : public wf::per_output_plugin_instance_t
         transform->translation_y = (workspace_from_geometry.y - workspace_to_geometry.y) * progress;
         workspace_switch_view->get_transformed_node()->end_transform_update();
 
-        output->render->schedule_redraw();
+        if (auto output = workspace_switch_view->get_output())
+        {
+            output->render->schedule_redraw();
+        }
     };
 
     wf::effect_hook_t barrel_roll_animation = [=] ()
@@ -831,11 +889,15 @@ class wf_menu : public wf::per_output_plugin_instance_t
         {
             if (barrel_roll_view)
             {
+                if (auto output = barrel_roll_view->get_output())
+                {
+                    output->render->rem_effect(&barrel_roll_animation);
+                }
+
                 barrel_roll_view->get_transformed_node()->rem_transformer(barrel_roll_transformer_name);
                 barrel_roll_view = nullptr;
             }
 
-            output->render->rem_effect(&barrel_roll_animation);
             return;
         }
 
@@ -845,7 +907,11 @@ class wf_menu : public wf::per_output_plugin_instance_t
         if (!transform)
         {
             barrel_roll_view->get_transformed_node()->rem_transformer(barrel_roll_transformer_name);
-            output->render->rem_effect(&barrel_roll_animation);
+            if (auto output = barrel_roll_view->get_output())
+            {
+                output->render->rem_effect(&barrel_roll_animation);
+            }
+
             return;
         }
 
@@ -860,7 +926,10 @@ class wf_menu : public wf::per_output_plugin_instance_t
         transform->angle = progress * M_PI * 2.0;
         barrel_roll_view->get_transformed_node()->end_transform_update();
 
-        output->render->schedule_redraw();
+        if (auto output = barrel_roll_view->get_output())
+        {
+            output->render->schedule_redraw();
+        }
     };
 
     void fini() override
@@ -920,4 +989,4 @@ static void bind_menu(wl_client *client, void *data, uint32_t, uint32_t id)
     menu->send_menu_items();
 }
 
-DECLARE_WAYFIRE_PLUGIN(wf::per_output_plugin_t<wf::menu::wf_menu>);
+DECLARE_WAYFIRE_PLUGIN(wf::menu::wf_menu);
