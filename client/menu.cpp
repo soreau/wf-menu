@@ -1,10 +1,11 @@
 #include "menu.hpp"
 #include <iostream>
 #include <wayland-client.h>
+#include <gtkmm/cssprovider.h>
 #include <gdk/wayland/gdkwayland.h>
 
 #include "wf-menu-client-protocol.h"
-#include "wf-menu-actions.hpp"
+#include "wf-menu-common.hpp"
 
 static wf_menu_manager *menu_manager;
 static std::vector<MenuItemConfig> menu_structure;
@@ -89,6 +90,12 @@ DynamicMenuWindow::DynamicMenuWindow() :
     // Create an action group to handle dynamic menu item triggers
     m_action_group = Gio::SimpleActionGroup::create();
     insert_action_group("wf-menu", m_action_group);
+
+    auto css_provider = Gtk::CssProvider::create();
+    css_provider->load_from_data(
+        "* { border-radius: " + std::to_string(WF_MENU_CORNER_RADIUS) + "px; }");
+    Gtk::StyleContext::add_provider_for_display(Gdk::Display::get_default(),
+        css_provider, GTK_STYLE_PROVIDER_PRIORITY_USER);
 
     auto gdk_display = gdk_display_get_default();
     auto display     = gdk_wayland_display_get_wl_display(gdk_display);
