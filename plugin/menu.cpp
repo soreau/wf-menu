@@ -27,7 +27,6 @@
 #include <wayfire/plugin.hpp>
 #include <wayfire/opengl.hpp>
 #include <wayfire/util/log.hpp>
-#include <wayfire/view-helpers.hpp>
 #include <wayfire/toplevel-view.hpp>
 #include <wayfire/workspace-set.hpp>
 #include <wayfire/util/duration.hpp>
@@ -36,9 +35,7 @@
 #include <wayfire/view-transform.hpp>
 #include <wayfire/scene-operations.hpp>
 #include <wayfire/signal-definitions.hpp>
-#include <wayfire/per-output-plugin.hpp>
 #include <wayfire/txn/transaction-manager.hpp>
-#include <wayfire/plugins/common/shared-core-data.hpp>
 
 #include <linux/input-event-codes.h>
 
@@ -423,9 +420,12 @@ class wf_menu : public wf::plugin_interface_t
             /* Add drop shadow */
             auto shadow = std::make_shared<simple_shadow_node_t>(toplevel);
             wf::scene::add_back(menu_view->get_surface_root_node(), shadow);
+
+            /* Populate menu items list */
             (parent_view &&
                 parent_view->role !=
                 wf::VIEW_ROLE_DESKTOP_ENVIRONMENT) ? prepare_wm_menu() : prepare_desktop_menu();
+            /* Send the item list data to the menu client */
             send_menu_items();
         }
     };
