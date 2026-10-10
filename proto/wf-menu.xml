@@ -14,6 +14,10 @@
             <arg name="item" type="string"/>
         </event>
 
+        <event name="menu_corner_radius">
+            <arg name="radius" type="uint"/>
+        </event>
+
         <event name="menu_items_done">
         </event>
 

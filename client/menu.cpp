@@ -2,10 +2,9 @@
 #include <iostream>
 #include <wayland-client.h>
 #include <gtkmm/cssprovider.h>
-#include <gdk/wayland/gdkwayland.h>
 
 #include "wf-menu-client-protocol.h"
-#include "wf-menu-common.hpp"
+#include "wf-menu-actions.hpp"
 
 static wf_menu_manager *menu_manager;
 static std::vector<MenuItemConfig> menu_structure;
@@ -35,6 +34,13 @@ static void handle_submenu_item(void *data, wf_menu_manager *wf_menu_manager, ui
     menu_item->submenu_items.push_back({action_id, item});
 }
 
+static void handle_menu_corner_radius(void *data, wf_menu_manager *wf_menu_manager, uint32_t radius)
+{
+    DynamicMenuWindow *wf_menu = (DynamicMenuWindow*)data;
+    printf("%s: %d\n", __func__, radius);
+    wf_menu->corner_radius = radius;
+}
+
 static void handle_menu_items_done(void *data, wf_menu_manager *wf_menu_manager)
 {
     printf("%s\n", __func__);
@@ -46,7 +52,8 @@ static wf_menu_manager_listener wf_menu_impl = {
     .menu_items_start = handle_menu_items_start,
     .menu_item    = handle_menu_item,
     .submenu_item = handle_submenu_item,
-    .menu_items_done = handle_menu_items_done,
+    .menu_corner_radius = handle_menu_corner_radius,
+    .menu_items_done    = handle_menu_items_done,
 };
 
 static void registry_add_object(void *data, wl_registry *registry, uint32_t name,
@@ -62,6 +69,7 @@ static void registry_add_object(void *data, wl_registry *registry, uint32_t name
             version);
         wf_menu_manager_add_listener(menu_manager,
             &wf_menu_impl, wf_menu);
+        wl_display_roundtrip(wf_menu->display);
     }
 }
 
@@ -91,19 +99,19 @@ DynamicMenuWindow::DynamicMenuWindow() :
     m_action_group = Gio::SimpleActionGroup::create();
     insert_action_group("wf-menu", m_action_group);
 
-    auto css_provider = Gtk::CssProvider::create();
-    css_provider->load_from_data(
-        "* { border-radius: " + std::to_string(WF_MENU_CORNER_RADIUS) + "px; }");
-    Gtk::StyleContext::add_provider_for_display(Gdk::Display::get_default(),
-        css_provider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-
     auto gdk_display = gdk_display_get_default();
-    auto display     = gdk_wayland_display_get_wl_display(gdk_display);
+    this->display = gdk_wayland_display_get_wl_display(gdk_display);
 
     auto registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, this);
     wl_display_roundtrip(display);
     wl_registry_destroy(registry);
+
+    auto css_provider = Gtk::CssProvider::create();
+    css_provider->load_from_data(
+        "* { border-radius: " + std::to_string(this->corner_radius) + "px; }");
+    Gtk::StyleContext::add_provider_for_display(Gdk::Display::get_default(),
+        css_provider, GTK_STYLE_PROVIDER_PRIORITY_USER);
 
     set_menu_structure(menu_structure);
 }

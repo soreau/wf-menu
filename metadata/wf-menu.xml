@@ -4,5 +4,12 @@
 		<_short>Wayfire Menu</_short>
 		<_long>Right click menu plugin for wayfire.</_long>
 		<category>Utility</category>
+		<option name="corner_radius" type="int">
+			<_short>Corner Radius</_short>
+			<_long>The radius used to render the corners and shadows of the menu window.</_long>
+			<default>10</default>
+			<min>0</min>
+			<max>100</max>
+		</option>
 	</plugin>
 </wayfire>

@@ -4,6 +4,7 @@
 #include <gtkmm/box.h>
 #include <gtkmm/button.h>
 #include <gtkmm/revealer.h>
+#include <gdk/wayland/gdkwayland.h>
 #include <giomm/simpleactiongroup.h>
 #include <vector>
 #include <string>
@@ -21,9 +22,12 @@ class DynamicMenuWindow : public Gtk::Window
     DynamicMenuWindow();
     virtual ~DynamicMenuWindow();
 
+    wl_display *display;
+
     // Call this before showing the window to populate items dynamically
     void set_menu_structure(const std::vector<MenuItemConfig>& config);
     void toggle_submenu(Gtk::Revealer *revealer);
+    uint32_t corner_radius;
 
   protected:
     // Signal handlers

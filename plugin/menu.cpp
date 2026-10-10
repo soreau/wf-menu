@@ -41,7 +41,7 @@
 
 #include "wf-cube-control-signal.hpp"
 #include "wf-menu-server-protocol.h"
-#include "wf-menu-common.hpp"
+#include "wf-menu-actions.hpp"
 
 extern "C"
 {
@@ -96,80 +96,80 @@ static const char *shadow_frag_source =
 precision highp float;
 
 vec4 shadow_color = vec4(0.0, 0.0, 0.0, 0.2);
-uniform float shadow_radius;
+uniform float corner_radius;
 uniform vec2 size;
 
 void main()
 {
     float d;
-    float corner_radius = shadow_radius;
+    float shadow_radius = 10.0;
     vec4 c = shadow_color;
     vec4 m = vec4(0.0);
     vec4 s;
     vec2 pos = gl_FragCoord.xy;
-    float diffuse = 1.0 / shadow_radius;
+    float diffuse = 2.0 / shadow_radius;
 
     // top
-    if (pos.x > shadow_radius * 4.0 && pos.x < size.x - shadow_radius * 4.0 && pos.y < shadow_radius * 4.0)
+    if (pos.x > corner_radius * 2.0 && pos.x < size.x - corner_radius * 2.0 && pos.y < corner_radius * 2.0)
     {
-        d = distance(vec2(pos.x, shadow_radius * 2.0), pos);
+        d = distance(vec2(pos.x, corner_radius), pos);
         gl_FragColor = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
         return;
     }
     // right
-    if (pos.x > size.x - shadow_radius * 4.0 && pos.y > shadow_radius * 4.0 && pos.y < size.y - shadow_radius * 4.0)
+    if (pos.x > size.x - corner_radius * 2.0 && pos.y > corner_radius * 2.0 && pos.y < size.y - corner_radius * 2.0)
     {
-        d = distance(vec2(size.x - shadow_radius * 2.0, pos.y), pos);
+        d = distance(vec2(size.x - corner_radius, pos.y), pos);
         gl_FragColor = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
         return;
     }
     // bottom
-    if (pos.x > (shadow_radius * 4.0) && pos.x < size.x - (shadow_radius * 4.0) && pos.y > size.y - shadow_radius * 4.0)
+    if (pos.x > (corner_radius * 2.0) && pos.x < size.x - (corner_radius * 2.0) && pos.y > size.y - corner_radius * 2.0)
     {
-        d = distance(vec2(pos.x, size.y - shadow_radius * 2.0), pos);
+        d = distance(vec2(pos.x, size.y - corner_radius), pos);
         gl_FragColor = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
         return;
     }
     // left
-    if (pos.x < shadow_radius * 4.0 && pos.y > shadow_radius * 4.0 && pos.y < size.y - shadow_radius * 4.0)
+    if (pos.x < corner_radius * 2.0 && pos.y > corner_radius * 2.0 && pos.y < size.y - corner_radius * 2.0)
     {
-        d = distance(vec2(shadow_radius * 2.0, pos.y), pos);
+        d = distance(vec2(corner_radius, pos.y), pos);
         gl_FragColor = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
         return;
     }
     // top left corner
-    if (pos.x < shadow_radius * 4.0 && pos.y < shadow_radius * 4.0)
+    if (pos.x < corner_radius * 2.0 && pos.y < corner_radius * 2.0)
     {
-        d = distance(vec2(shadow_radius * 3.5), pos) - corner_radius * 1.5;
+        d = distance(vec2(corner_radius * 2.0), pos) - corner_radius;
         s = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
-        d = distance(vec2(shadow_radius * 3.5), pos) - corner_radius * 1.5;
+        d = distance(vec2(corner_radius * 2.0), pos) - corner_radius;
         gl_FragColor = mix(c, s, clamp(d, 0.0, 1.0));
         return;
     }
     // top right corner
-    if (pos.x > size.x - (shadow_radius * 4.0) && pos.y < (shadow_radius * 4.0))
+    if (pos.x > size.x - (corner_radius * 2.0) && pos.y < (corner_radius * 2.0))
     {
-        d = distance(vec2(size.x - shadow_radius * 3.5, shadow_radius * 3.5), pos) - corner_radius * 1.5;
+        d = distance(vec2(size.x - corner_radius * 2.0, corner_radius * 2.0), pos) - corner_radius;
         s = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
-        d = distance(vec2(size.x - shadow_radius * 3.5, shadow_radius * 3.5), pos) - corner_radius * 1.5;
+        d = distance(vec2(size.x - corner_radius * 2.0, corner_radius * 2.0), pos) - corner_radius;
         gl_FragColor = mix(c, s, clamp(d, 0.0, 1.0));
         return;
     }
     // bottom right corner
-    if (pos.x > size.x - (shadow_radius * 4.0) && pos.y > size.y - (shadow_radius * 4.0))
+    if (pos.x > size.x - (corner_radius * 2.0) && pos.y > size.y - (corner_radius * 2.0))
     {
-        d = distance(vec2(size.x - shadow_radius * 3.5, float(size.y - (shadow_radius * 3.5))), pos) - corner_radius * 1.5;
+        d = distance(vec2(size.x - corner_radius * 2.0, float(size.y - (corner_radius * 2.0))), pos) - corner_radius;
         s = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
-        d = distance(vec2(size.x - shadow_radius * 3.5, float(size.y - (shadow_radius * 3.5))), pos) - corner_radius * 1.5;
+        d = distance(vec2(size.x - corner_radius * 2.0, float(size.y - (corner_radius * 2.0))), pos) - corner_radius;
         gl_FragColor = mix(c, s, clamp(d, 0.0, 1.0));
         return;
     }
     // bottom left corner
-    if (pos.x < (shadow_radius * 4.0) && pos.y > size.y - (shadow_radius * 4.0))
+    if (pos.x < (corner_radius * 2.0) && pos.y > size.y - (corner_radius * 2.0))
     {
-        d = distance(vec2(shadow_radius * 3.5, float(size.y - (shadow_radius * 3.5))), pos) - corner_radius * 1.5;
+        d = distance(vec2(corner_radius * 2.0, float(size.y - (corner_radius * 2.0))), pos) - corner_radius;
         s = mix(c, m, 1.0 - exp(-pow(d * diffuse, 2.0)));
-        d = distance(vec2(shadow_radius * 3.5, float(size.y - (shadow_radius * 3.5))), pos) - corner_radius * 1.5;
+        d = distance(vec2(corner_radius * 2.0, float(size.y - (corner_radius * 2.0))), pos) - corner_radius;
         gl_FragColor = mix(c, s, clamp(d, 0.0, 1.0));
         return;
     }
@@ -180,6 +180,7 @@ void main()
 
 class simple_shadow_node_t : public wf::scene::node_t
 {
+    wf::option_wrapper_t<int> corner_radius{"wf-menu/corner_radius"};
     wayfire_toplevel_view view;
     OpenGL::program_t program;
 
@@ -239,7 +240,7 @@ class simple_shadow_node_t : public wf::scene::node_t
                 self->program.uniformMatrix4f("matrix", wf::gles::output_transform(data.target));
                 self->program.attrib_pointer("position", 2, 0, vertex_data);
                 self->program.uniform2f("size", vg.width, vg.height);
-                self->program.uniform1f("shadow_radius", WF_MENU_CORNER_RADIUS / 2.0);
+                self->program.uniform1f("corner_radius", std::max(int(self->corner_radius), 10));
                 gles::for_each_scissor_rect(data.target, data.damage, [&]
                 {
                     GL_CALL(glDrawArrays(GL_TRIANGLE_FAN, 0, 4));
@@ -258,13 +259,14 @@ class simple_shadow_node_t : public wf::scene::node_t
     wf::geometry_t get_bounding_box() override
     {
         auto vg = view->get_geometry();
-        vg.x = vg.y = -WF_MENU_CORNER_RADIUS;
+        vg.x = vg.y = -std::max(int(corner_radius), 10);
         return vg;
     }
 };
 
 class wf_menu : public wf::plugin_interface_t
 {
+    wf::option_wrapper_t<int> corner_radius{"wf-menu/corner_radius"};
     bool barrel_roll_clockwise;
     barrel_roll_animation_t barrel_roll_progression;
     workspace_switch_animation_t workspace_switch_progression;
@@ -436,9 +438,8 @@ class wf_menu : public wf::plugin_interface_t
             menu_view->connect(&on_view_unmapped);
             /* Add padding to surface for shadow rendering */
             auto& pending = toplevel->toplevel()->pending();
-            pending.margins =
-            {WF_MENU_CORNER_RADIUS, WF_MENU_CORNER_RADIUS, WF_MENU_CORNER_RADIUS,
-                WF_MENU_CORNER_RADIUS};
+            auto r = double(std::max(int(corner_radius), 10));
+            pending.margins  = {r, r, r, r};
             pending.geometry = wf::expand_geometry_by_margins(pending.geometry, pending.margins);
             wf::get_core().tx_manager->schedule_object(toplevel->toplevel());
             /* Move to very topmost layer */
@@ -593,6 +594,7 @@ class wf_menu : public wf::plugin_interface_t
             wf_menu_manager_send_menu_item(menu_resource, item.first, item.second.c_str());
         }
 
+        wf_menu_manager_send_menu_corner_radius(menu_resource, corner_radius);
         wf_menu_manager_send_menu_items_done(menu_resource);
         menu_items.clear();
     }
