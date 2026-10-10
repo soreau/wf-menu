@@ -43,6 +43,11 @@
 #include "wf-menu-server-protocol.h"
 #include "wf-menu-common.hpp"
 
+extern "C"
+{
+#include <wlr/types/wlr_xdg_shell.h>
+}
+
 static wl_resource *menu_resource;
 static wayfire_view menu_view, parent_view;
 std::vector<std::pair<uint32_t, std::string>> menu_items;
@@ -368,8 +373,31 @@ class wf_menu : public wf::plugin_interface_t
         if (toplevel->get_app_id() == "wf-menu")
         {
             menu_view = ev->view;
-            auto output = menu_view->get_output();
 
+            if (!menu_view)
+            {
+                return;
+            }
+
+            for (auto v : wf::get_core().get_all_views())
+            {
+                if (v && v->get_wlr_surface() && (v->role == wf::VIEW_ROLE_UNMANAGED))
+                {
+                    if (wlr_xdg_popup_try_from_wlr_surface(v->get_wlr_surface()))
+                    {
+                        if (menu_view)
+                        {
+                            wf::scene::set_node_enabled(menu_view->get_transformed_node(), false);
+                            wf::scene::set_node_enabled(menu_view->get_root_node(), false);
+                            menu_view->close();
+                            menu_view = nullptr;
+                            return;
+                        }
+                    }
+                }
+            }
+
+            auto output = menu_view->get_output();
             if (parent_view)
             {
                 /* Move top left of menu to mouse cursor position */
@@ -456,7 +484,7 @@ class wf_menu : public wf::plugin_interface_t
     wf::signal::connection_t<wf::input_event_signal<wlr_pointer_button_event>> on_button_event =
         [=] (wf::input_event_signal<wlr_pointer_button_event> *ev)
     {
-        if (ev->event->state != WL_POINTER_BUTTON_STATE_PRESSED)
+        if (ev->event->state != WL_POINTER_BUTTON_STATE_RELEASED)
         {
             return;
         }
