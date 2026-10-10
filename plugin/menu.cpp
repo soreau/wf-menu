@@ -387,6 +387,9 @@ class wf_menu : public wf::plugin_interface_t
                     {
                         if (menu_view)
                         {
+                            wf::view_unmapped_signal unmap_signal;
+                            unmap_signal.view = menu_view;
+                            wf::get_core().emit(&unmap_signal);
                             wf::scene::set_node_enabled(menu_view->get_transformed_node(), false);
                             wf::scene::set_node_enabled(menu_view->get_root_node(), false);
                             menu_view->close();
