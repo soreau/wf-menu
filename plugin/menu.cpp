@@ -82,10 +82,8 @@ precision highp float;
 
 attribute highp vec2 position;
 
-uniform mat4 matrix;
-
 void main() {
-    gl_Position = matrix * vec4(position, 0.0, 1.0);
+    gl_Position = vec4(position, 0.0, 1.0);
 }
 )";
 
@@ -183,6 +181,7 @@ class simple_shadow_node_t : public wf::scene::node_t
     wf::option_wrapper_t<int> corner_radius{"wf-menu/corner_radius"};
     wayfire_toplevel_view view;
     OpenGL::program_t program;
+    wf::auxilliary_buffer_t shadow_buffer;
 
   public:
 
@@ -194,7 +193,9 @@ class simple_shadow_node_t : public wf::scene::node_t
     }
 
     ~simple_shadow_node_t()
-    {}
+    {
+        shadow_buffer.free();
+    }
 
     class shadow_render_instance_t : public wf::scene::render_instance_t
     {
@@ -233,19 +234,25 @@ class simple_shadow_node_t : public wf::scene::node_t
                 1.0f, 1.0f,
                 -1.0f, 1.0f
             };
-            auto vg = self->view->get_geometry();
+            auto vg = self->get_bounding_box();
+            self->shadow_buffer.allocate(wf::dimensions(vg));
+            wf::gles::bind_render_buffer(self->shadow_buffer.get_renderbuffer());
+            OpenGL::clear({0.0, 0.0, 0.0, 0.0});
+            self->program.use(wf::TEXTURE_TYPE_RGBA);
+            self->program.attrib_pointer("position", 2, 0, vertex_data);
+            self->program.uniform2f("size", vg.width, vg.height);
+            self->program.uniform1f("corner_radius", std::max(int(self->corner_radius), 10));
+            GL_CALL(glDrawArrays(GL_TRIANGLE_FAN, 0, 4));
+            self->program.deactivate();
             data.pass->custom_gles_subpass(data.target, [&]
             {
-                self->program.use(wf::TEXTURE_TYPE_RGBA);
-                self->program.uniformMatrix4f("matrix", wf::gles::output_transform(data.target));
-                self->program.attrib_pointer("position", 2, 0, vertex_data);
-                self->program.uniform2f("size", vg.width, vg.height);
-                self->program.uniform1f("corner_radius", std::max(int(self->corner_radius), 10));
-                gles::for_each_scissor_rect(data.target, data.damage, [&]
+                wf::gles::for_each_scissor_rect(data.target, data.damage, [&]
                 {
-                    GL_CALL(glDrawArrays(GL_TRIANGLE_FAN, 0, 4));
+                    OpenGL::render_transformed_texture(wf::gles_texture_t{self->shadow_buffer.get_texture()},
+                        vg,
+                        wf::gles::render_target_orthographic_projection(data.target), glm::vec4{1.0},
+                        OpenGL::TEXTURE_TRANSFORM_INVERT_Y);
                 });
-                self->program.deactivate();
             });
         }
     };
