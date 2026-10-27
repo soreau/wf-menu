@@ -36,12 +36,14 @@
 #include <wayfire/scene-operations.hpp>
 #include <wayfire/signal-definitions.hpp>
 #include <wayfire/txn/transaction-manager.hpp>
+#include <wayfire/plugins/wm-actions-signals.hpp>
 
 #include <linux/input-event-codes.h>
 
 #include "wf-cube-control-signal.hpp"
 #include "wf-menu-server-protocol.h"
 #include "wf-menu-actions.hpp"
+#include "wm-actions.hpp"
 
 extern "C"
 {
@@ -283,6 +285,7 @@ class wf_menu : public wf::plugin_interface_t
     cube_spin_animation_t cube_spin_animation{wf::create_option<int>(1500)};
     cube_spin_state cube_state = CUBE_SPIN_DISABLED;
     bool cube_spin_hook_set    = false;
+    wf::scene::floating_inner_ptr always_above;
 
   public:
     void init() override
@@ -371,6 +374,14 @@ class wf_menu : public wf::plugin_interface_t
         } else
         {
             menu_items.push_back({i++, WM_SET_STICKY});
+        }
+
+        if (parent_view->get_data<wf::custom_data_t>("wm-actions-above"))
+        {
+            menu_items.push_back({i++, WM_UNSET_ALWAYS_ON_TOP});
+        } else
+        {
+            menu_items.push_back({i++, WM_SET_ALWAYS_ON_TOP});
         }
 
         menu_items.push_back({0, WM_SEND_TO_WORKSPACE});
@@ -623,6 +634,35 @@ class wf_menu : public wf::plugin_interface_t
         menu_items.clear();
     }
 
+    bool set_keep_above_state(wayfire_view view, bool above)
+    {
+        if (!view || !view->get_output())
+        {
+            return false;
+        }
+
+        auto output = view->get_output();
+
+        if (above)
+        {
+            unset_below_state_data(output, view);
+            always_above.reset();
+            always_above = std::make_shared<always_on_top_root_node_t>(output);
+            wf::scene::add_front(
+                wf::get_core().scene()->layers[(int)wf::scene::layer::WORKSPACE], always_above);
+            wf::scene::readd_front(always_above, view->get_root_node());
+            view->store_data(std::make_unique<wf::custom_data_t>(),
+                "wm-actions-above");
+            emit_above_changed(output, view);
+        } else
+        {
+            wf::scene::readd_front(output->wset()->get_node(), view->get_root_node());
+            unset_above_state_data(output, view);
+        }
+
+        return true;
+    }
+
     bool handle_desktop_action(std::string action)
     {
         if (action == DESKTOP_CHANGE_BG)
@@ -720,6 +760,16 @@ class wf_menu : public wf::plugin_interface_t
         } else if (action == WM_MAXIMIZE)
         {
             wf::get_core().default_wm->tile_request(wf::toplevel_cast(view), wf::TILED_EDGES_ALL);
+            parent_view = nullptr;
+            return true;
+        } else if (action == WM_SET_ALWAYS_ON_TOP)
+        {
+            set_keep_above_state(parent_view, true);
+            parent_view = nullptr;
+            return true;
+        } else if (action == WM_UNSET_ALWAYS_ON_TOP)
+        {
+            set_keep_above_state(parent_view, false);
             parent_view = nullptr;
             return true;
         } else if ((action == WM_SET_STICKY) || (action == WM_UNSET_STICKY))
