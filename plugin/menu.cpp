@@ -317,7 +317,7 @@ class wf_menu : public wf::plugin_interface_t
 
         menu_items.push_back({i++, DESKTOP_CHANGE_BG});
         menu_items.push_back({i++, DESKTOP_LAUNCH_WCM});
-        menu_items.push_back({0, DESKTOP_MOVE_TO_WORKSPACE});
+        menu_items.push_back({0, DESKTOP_GO_TO_WORKSPACE});
         for (int y = 1; y <= workspace_grid_size.height; y++)
         {
             for (int x = 1; x <= workspace_grid_size.width; x++)

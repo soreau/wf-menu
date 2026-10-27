@@ -9,6 +9,6 @@ static std::string WM_DO_A_BARREL_ROLL  = "Do a Barrel Roll";
 
 static std::string DESKTOP_CHANGE_BG  = "Change Background";
 static std::string DESKTOP_LAUNCH_WCM = "Launch WCM";
-static std::string DESKTOP_MOVE_TO_WORKSPACE = "Move to Workspace";
+static std::string DESKTOP_GO_TO_WORKSPACE = "Go to Workspace";
 static std::string DESKTOP_CUBE_SPIN = "Cube Spin";
 static std::string DESKTOP_DO_A_BARREL_ROLL = "Do a Barrel Roll";
