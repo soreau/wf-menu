@@ -345,9 +345,18 @@ class wf_menu : public wf::plugin_interface_t
 
         menu_items.clear();
 
+        if (!parent_view)
+        {
+            return;
+        }
+
+        if (!wf::toplevel_cast(parent_view))
+        {
+            return;
+        }
+
         menu_items.push_back({i++, WM_MINIMIZE});
-        if (parent_view && wf::toplevel_cast(parent_view) &&
-            wf::toplevel_cast(parent_view)->pending_tiled_edges())
+        if (wf::toplevel_cast(parent_view)->pending_tiled_edges())
         {
             menu_items.push_back({i++, WM_UNMAXIMIZE});
         } else
@@ -356,6 +365,14 @@ class wf_menu : public wf::plugin_interface_t
         }
 
         menu_items.push_back({i++, WM_CLOSE});
+        if (wf::toplevel_cast(parent_view)->sticky)
+        {
+            menu_items.push_back({i++, WM_UNSET_STICKY});
+        } else
+        {
+            menu_items.push_back({i++, WM_SET_STICKY});
+        }
+
         menu_items.push_back({0, WM_SEND_TO_WORKSPACE});
         for (int y = 1; y <= workspace_grid_size.height; y++)
         {
@@ -705,6 +722,14 @@ class wf_menu : public wf::plugin_interface_t
             wf::get_core().default_wm->tile_request(wf::toplevel_cast(view), wf::TILED_EDGES_ALL);
             parent_view = nullptr;
             return true;
+        } else if ((action == WM_SET_STICKY) || (action == WM_UNSET_STICKY))
+        {
+            if (auto toplevel = wf::toplevel_cast(view))
+            {
+                toplevel->set_sticky(toplevel->sticky ^ 1);
+                parent_view = nullptr;
+                return true;
+            }
         } else if (action == WM_CLOSE)
         {
             view->close();
